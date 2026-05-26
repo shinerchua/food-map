@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>🍜 My Food Map</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: sans-serif; display: flex; flex-direction: column; height: 100vh; }
+    #header {
+      background: #e8472a; color: white; padding: 12px 20px;
+      display: flex; align-items: center; gap: 12px;
+    }
+    #header h1 { font-size: 1.2rem; }
+    #count { font-size: 0.85rem; opacity: 0.85; margin-left: auto; }
+    #map { flex: 1; }
+    .info-window { max-width: 200px; }
+    .info-window h3 { font-size: 1rem; margin-bottom: 4px; }
+    .info-window .cat { color: #e8472a; font-size: 0.8rem; font-weight: bold; margin-bottom: 4px; }
+    .info-window .addr { font-size: 0.82rem; color: #555; margin-bottom: 4px; }
+    .info-window .note { font-size: 0.82rem; color: #333; }
+  </style>
+</head>
+<body>
+  <div id="header">
+    <span style="font-size:1.5rem">🍜</span>
+    <h1>My Food Map</h1>
+    <span id="count">Loading…</span>
+  </div>
+  <div id="map"></div>
+
+  <script>
+    const SHEET_CSV_URL = "PASTE_YOUR_CSV_EXPORT_LINK_HERE";
+    const GMAPS_API_KEY = "PASTE_YOUR_GOOGLE_MAPS_API_KEY_HERE";
+
+    let map, infoWindow;
+
+    async function loadPlaces() {
+      const resp = await fetch(SHEET_CSV_URL);
+      const text = await resp.text();
+      const rows = text.trim().split("\n").slice(1); // skip header row
+
+      const places = rows
+        .map(row => {
+          // handle commas inside quoted fields
+          const cols = [];
+          let cur = "", inQ = false;
+          for (const ch of row) {
+            if (ch === '"') inQ = !inQ;
+            else if (ch === ',' && !inQ) { cols.push(cur.trim()); cur = ""; }
+            else cur += ch;
+          }
+          cols.push(cur.trim());
+          const [name, address, category, note, lat, lng] = cols;
+          return { name, address, category, note,
+                   lat: parseFloat(lat), lng: parseFloat(lng) };
+        })
+        .filter(p => p.name && !isNaN(p.lat) && !isNaN(p.lng));
+
+      document.getElementById("count").textContent =
+        `${places.length} place${places.length !== 1 ? "s" : ""}`;
+
+      // Centre map on Singapore by default
+      const centre = places.length
+        ? { lat: places.reduce((s,p)=>s+p.lat,0)/places.length,
+            lng: places.reduce((s,p)=>s+p.lng,0)/places.length }
+        : { lat: 1.3521, lng: 103.8198 };
+
+      map = new google.maps.Map(document.getElementById("map"), {
+        center: centre, zoom: 12,
+        mapTypeControl: false, streetViewControl: false,
+        styles: [
+          { featureType:"poi",elementType:"labels",stylers:[{visibility:"off"}] }
+        ]
+      });
+
+      infoWindow = new google.maps.InfoWindow();
+
+      places.forEach(p => {
+        const marker = new google.maps.Marker({
+          position: { lat: p.lat, lng: p.lng },
+          map,
+          title: p.name,
+          icon: {
+            path: google.maps.SymbolPath.CIRCLE,
+            scale: 10,
+            fillColor: "#e8472a",
+            fillOpacity: 1,
+            strokeColor: "#fff",
+            strokeWeight: 2,
+          }
+        });
+
+        marker.addListener("click", () => {
+          infoWindow.setContent(`
+            <div class="info-window">
+              <div class="cat">${p.category || ""}</div>
+              <h3>${p.name}</h3>
+              <div class="addr">📍 ${p.address || ""}</div>
+              ${p.note ? `<div class="note">📝 ${p.note}</div>` : ""}
+              <br/>
+              <a href="https://www.google.com/maps?q=${p.lat},${p.lng}"
+                 target="_blank" style="color:#e8472a;font-size:0.82rem">
+                Open in Google Maps ↗
+              </a>
+            </div>`);
+          infoWindow.open(map, marker);
+        });
+      });
+    }
+
+    window.initMap = function () { loadPlaces(); };
+  </script>
+
+  <script
+    src="https://maps.googleapis.com/maps/api/js?key=${GMAPS_API_KEY}&callback=initMap"
+    async defer
+    onerror="document.getElementById('count').textContent='Map failed to load — check API key'">
+  </script>
+  <!-- Replace ${GMAPS_API_KEY} in the src above manually with your actual key -->
+</body>
+</html>
