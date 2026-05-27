@@ -26,6 +26,13 @@ IG_PATTERN  = re.compile(r"instagram\.com/(p|reel|tv)/([A-Za-z0-9_-]+)")
 
 def get_google_creds():
     from google.oauth2 import service_account
+    import json as _json
+    raw = os.environ.get("SERVICE_ACCOUNT_JSON", "")
+    if raw:
+        return service_account.Credentials.from_service_account_info(
+            _json.loads(raw),
+            scopes=["https://www.googleapis.com/auth/spreadsheets"],
+        )
     return service_account.Credentials.from_service_account_file(
         SERVICE_ACCOUNT_FILE,
         scopes=["https://www.googleapis.com/auth/spreadsheets"],
