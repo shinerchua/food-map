@@ -1,8 +1,6 @@
-import os, re, json, httpx, logging
-import asyncio
+import os, re, json, httpx, logging, asyncio, difflib
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
-import difflib  # add this at the top with other imports
 
 logging.basicConfig(level=logging.INFO)
 SHEET_ID             = "1xfTGJ6akoa-AkgP414gqsFvhzzhrOPBoQYwaqIl6eY8"
@@ -16,9 +14,6 @@ GMAPS_API_KEY  = "AIzaSyCekaXF69kJc_ui6XkQd9CHpqTtj_mOnjI"
 URL_PATTERN = re.compile(r"https?://[^\s]+")
 IG_PATTERN  = re.compile(r"instagram\.com/(p|reel|tv)/([A-Za-z0-9_-]+)")
 
-
-
-
 # ══════════════════════════════════════════════════════════════════════════════
 # GOOGLE SHEETS
 # ══════════════════════════════════════════════════════════════════════════════
@@ -26,12 +21,14 @@ IG_PATTERN  = re.compile(r"instagram\.com/(p|reel|tv)/([A-Za-z0-9_-]+)")
 def get_google_creds():
     from google.oauth2 import service_account
     import json as _json
+    # On Render: paste the entire JSON key file content as SERVICE_ACCOUNT_JSON env var
     raw = os.environ.get("SERVICE_ACCOUNT_JSON", "")
     if raw:
         return service_account.Credentials.from_service_account_info(
             _json.loads(raw),
             scopes=["https://www.googleapis.com/auth/spreadsheets"],
         )
+    # Local dev: use the key file on disk
     return service_account.Credentials.from_service_account_file(
         SERVICE_ACCOUNT_FILE,
         scopes=["https://www.googleapis.com/auth/spreadsheets"],
@@ -756,18 +753,88 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await do_save(q, place)
 
 # ══════════════════════════════════════════════════════════════════════════════
-# RUN
+# RUN  —  webhook mode for Render, polling mode for local dev
 # ══════════════════════════════════════════════════════════════════════════════
 
-app = Application.builder().token(TELEGRAM_TOKEN).build()
-app.add_handler(CommandHandler("start",  start))
-app.add_handler(CommandHandler("help",   help_cmd))
-app.add_handler(CommandHandler("list",   list_cmd))
-app.add_handler(CommandHandler("delete", delete_cmd))
-app.add_handler(CommandHandler("edit",   edit_cmd))
-app.add_handler(CallbackQueryHandler(handle_edit_select, pattern="^edit_select:"))
-app.add_handler(CallbackQueryHandler(handle_callback))
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_edit_text))
+PORT                     = int(os.environ.get("PORT", 8080))
+RENDER_EXTERNAL_HOSTNAME = os.environ.get("RENDER_EXTERNAL_HOSTNAME", "")
 
-print("Bot is running!! Press Ctrl+C to stop.")
-app.run_polling(drop_pending_updates=True)
+def build_app() -> Application:
+    bot_app = Application.builder().token(TELEGRAM_TOKEN).build()
+    bot_app.add_handler(CommandHandler("start",  start))
+    bot_app.add_handler(CommandHandler("help",   help_cmd))
+    bot_app.add_handler(CommandHandler("list",   list_cmd))
+    bot_app.add_handler(CommandHandler("delete", delete_cmd))
+    bot_app.add_handler(CommandHandler("edit",   edit_cmd))
+    bot_app.add_handler(CallbackQueryHandler(handle_edit_select, pattern="^edit_select:"))
+    bot_app.add_handler(CallbackQueryHandler(handle_callback))
+    bot_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_edit_text))
+    return bot_app
+
+# ── Keep-alive: pings itself every 10 min so Render free tier stays awake ─────
+async def keep_alive(hostname: str):
+    url = f"https://{hostname}/"
+    await asyncio.sleep(60)          # wait 1 min for server to fully start
+    while True:
+        try:
+            async with httpx.AsyncClient(timeout=10) as c:
+                await c.get(url)
+            logging.info("Keep-alive ping sent ✓")
+        except Exception as e:
+            logging.warning(f"Keep-alive ping failed: {e}")
+        await asyncio.sleep(600)     # ping every 10 minutes
+
+# ── Webhook server (used on Render) ───────────────────────────────────────────
+async def run_webhook():
+    from aiohttp import web
+
+    bot_app = build_app()
+    webhook_path   = f"/webhook/{TELEGRAM_TOKEN}"
+    webhook_url    = f"https://{RENDER_EXTERNAL_HOSTNAME}{webhook_path}"
+
+    await bot_app.initialize()
+    await bot_app.bot.set_webhook(webhook_url)
+    logging.info(f"Webhook set → {webhook_url}")
+
+    async def health(request):
+        return web.Response(text="OK")
+
+    async def webhook_handler(request):
+        data   = await request.json()
+        update = Update.de_json(data, bot_app.bot)
+        await bot_app.process_update(update)
+        return web.Response(text="OK")
+
+    web_app = web.Application()
+    web_app["bot_app"] = bot_app
+    web_app.router.add_get("/",              health)
+    web_app.router.add_post(webhook_path,    webhook_handler)
+
+    runner = web.AppRunner(web_app)
+    await runner.setup()
+    await web.TCPSite(runner, "0.0.0.0", PORT).start()
+    logging.info(f"Server listening on port {PORT}")
+
+    # Start keep-alive loop alongside the server
+    asyncio.create_task(keep_alive(RENDER_EXTERNAL_HOSTNAME))
+
+    await asyncio.Event().wait()   # run forever
+
+# ── Entry point ───────────────────────────────────────────────────────────────
+# Render sets RENDER=true automatically — use that as the reliable signal
+IS_RENDER = os.environ.get("RENDER", "").lower() == "true"
+
+if __name__ == "__main__":
+    if IS_RENDER or RENDER_EXTERNAL_HOSTNAME:
+        logging.info("Starting in WEBHOOK mode (Render)")
+        asyncio.run(run_webhook())
+    else:
+        logging.info("Starting in POLLING mode (local)")
+        # Python 3.10+ safe polling using asyncio.run
+        async def _poll():
+            bot_app = build_app()
+            await bot_app.initialize()
+            await bot_app.start()
+            await bot_app.updater.start_polling(drop_pending_updates=True)
+            await asyncio.Event().wait()
+        asyncio.run(_poll())
