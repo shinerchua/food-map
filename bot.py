@@ -2,14 +2,20 @@ import os, re, json, httpx, logging, asyncio, difflib
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
+
+
+
 logging.basicConfig(level=logging.INFO)
 SHEET_ID             = "1xfTGJ6akoa-AkgP414gqsFvhzzhrOPBoQYwaqIl6eY8"
 SERVICE_ACCOUNT_FILE = "credentials.json"  # e.g. "foodbot-key.json"
 MY_MAP_URL           = "https://shinerchua.github.io/food-map/"   # the full mymaps.google.com/... link
-TELEGRAM_TOKEN = "8072591082:AAGXun1XCnRUIuT-lmczSgPqWIgVPfH98zY"
-GROQ_API_KEY   = "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"
-GMAPS_API_KEY  = "AIzaSyCekaXF69kJc_ui6XkQd9CHpqTtj_mOnjI"
-
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+GMAPS_API_KEY = os.getenv("GMAPS_API_KEY")
 
 URL_PATTERN = re.compile(r"https?://[^\s]+")
 IG_PATTERN  = re.compile(r"instagram\.com/(p|reel|tv)/([A-Za-z0-9_-]+)")
