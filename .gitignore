@@ -2,3 +2,5 @@ your-service-account-key.json
 __pycache__/
 *.pyc
 .env
+venv/
+credentials.json
