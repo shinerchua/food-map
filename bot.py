@@ -1,6 +1,5 @@
 import os, re, json, httpx, logging
 import asyncio
-import telebot
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 import difflib  # add this at the top with other imports
